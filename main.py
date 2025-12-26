@@ -1,73 +1,96 @@
 ﻿from flask import Flask, request, jsonify
-import psycopg2
 import os
 from urllib.parse import urlparse
 
+import psycopg  # новый драйвер psycopg3
+
 app = Flask(__name__)
 
-# Подключение к БД
-DATABASE_URL = os.environ.get('DATABASE_URL')
+# Берём строку подключения из переменной окружения Render
+DATABASE_URL = os.environ.get("DATABASE_URL")
 conn = None
+
 if DATABASE_URL:
     url = urlparse(DATABASE_URL)
-    conn = psycopg2.connect(
-        database=url.path[1:],
+
+    # Подключение к PostgreSQL через psycopg3
+    conn = psycopg.connect(
+        dbname=url.path[1:],       # имя базы после слэша
         user=url.username,
         password=url.password,
         host=url.hostname,
-        port=url.port
+        port=url.port,
+        sslmode="require",         # для удалённой БД по TLS
     )
 
-# Создание таблицы
-if conn:
+    # Создаём таблицу, если её ещё нет
     with conn.cursor() as cur:
-        cur.execute('''
+        cur.execute(
+            """
             CREATE TABLE IF NOT EXISTS messages (
                 id SERIAL PRIMARY KEY,
                 content TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT NOW()
             )
-        ''')
+            """
+        )
         conn.commit()
 
-@app.route('/')
-def hello():
-    return "Hello, Serverless! 🚀\n", 200, {'Content-Type': 'text/plain'}
 
-@app.route('/echo', methods=['POST'])
+@app.route("/")
+def hello():
+    return "Hello, Serverless! 🚀\n", 200, {"Content-Type": "text/plain"}
+
+
+@app.route("/echo", methods=["POST"])
 def echo():
     data = request.get_json()
-    return jsonify({
-        "status": "received",
-        "you_sent": data,
-        "length": len(str(data)) if data else 0
-    })
+    return jsonify(
+        {
+            "status": "received",
+            "you_sent": data,
+            "length": len(str(data)) if data else 0,
+        }
+    )
 
-@app.route('/save', methods=['POST'])
+
+@app.route("/save", methods=["POST"])
 def save_message():
+    # Если не смогли подключиться к БД
     if not conn:
         return jsonify({"error": "DB not connected"}), 500
-    
+
     data = request.get_json()
-    message = data.get('message', '') if data else ''
-    
+    message = data.get("message", "") if data else ""
+
     with conn.cursor() as cur:
-        cur.execute("INSERT INTO messages (content) VALUES (%s)", (message,))
+        cur.execute(
+            "INSERT INTO messages (content) VALUES (%s)",
+            (message,),
+        )
         conn.commit()
-    
+
     return jsonify({"status": "saved", "message": message})
 
-@app.route('/messages')
+
+@app.route("/messages")
 def get_messages():
     if not conn:
         return jsonify({"error": "DB not connected"}), 500
-    
+
     with conn.cursor() as cur:
-        cur.execute("SELECT id, content, created_at FROM messages ORDER BY id DESC LIMIT 10")
+        cur.execute(
+            "SELECT id, content, created_at "
+            "FROM messages ORDER BY id DESC LIMIT 10"
+        )
         rows = cur.fetchall()
-    
-    messages = [{"id": r[0], "text": r[1], "time": str(r[2])} for r in rows]
+
+    messages = [
+        {"id": r[0], "text": r[1], "time": str(r[2])}
+        for r in rows
+    ]
     return jsonify(messages)
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
